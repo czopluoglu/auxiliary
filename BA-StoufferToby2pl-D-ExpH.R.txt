@@ -1,0 +1,157 @@
+# From david thissen's website
+
+#http://www.davethissen.net/840F14/BA-StoufferToby2pl-D-ExpH.R
+
+# Bock and Aitkin IRT 
+# using the Stouffer-Toby (1951) 
+x1 <- c(rep(T,4),F,rep(T,3),rep(F,3),T,rep(F,4)) 
+x2 <- c(rep(T,3),F,T,T,F,F,T,T,F,F,T,rep(F,3))   
+x3 <- c(T,T,F,T,T,F,T,F,T,F,T,F,F,T,F,F)         
+x4 <- c(T,F,T,T,T,F,F,T,F,T,T,F,F,F,T,F)         
+x <- cbind(x1,x2,x3,x4)
+r <- c(42,23,6,6,1,24,25,7,4,2,1,38,9,6,2,20)
+
+stouffer <- data.frame(I(x),r)
+
+theta <- seq(-4,4,0.5)
+
+Gaussian.pts <-
+  function(mu,sigma,theta) {
+  curve <- exp(-0.5*((theta - mu)/sigma)^2)
+  curve <- curve/sum(curve)
+}
+
+trace.line.pts <-
+  function(a,b,theta) {
+  traceline <- 1/(1+exp(-a*(theta-b)))
+}
+
+ll.2pl <-
+  function(p2,r1,r0,theta) {
+  a <- p2[1]
+  b <- p2[2]
+  
+  itemtrace <- trace.line.pts(a,b,theta)
+
+  l <- (-1)*(sum(r1*(log(itemtrace))) + (sum(r0*(log(1.0-itemtrace)))))
+}
+
+ll.2plD <-
+  function(p2,r1,r0,theta) {
+  a <- p2[1]
+  b <- p2[2]
+# "itemtrace" replaced with P, derivatives added  
+  # print(a)
+  # print(b)
+
+  z <- a*(theta - b)
+  P <- 1.0 / (1.0 + exp(-z))
+  Q <- 1.0 - P
+
+  l <- (-1)*(sum(r1*(log(P))) + (sum(r0*(log(Q)))))
+
+  PQ <- P*Q
+  N <- r1 + r0
+  dif <- (r1/N) - P
+# gradient:
+  g1 <- (-1)*sum(N*dif*(theta-b))
+  g2 <- sum(N*dif*a)
+# hessian
+  h11 <- sum(N*PQ*((theta-b)^2))
+# line below is the only one that differs between this and empirical hessian
+  h12 <- (-1)*sum(a*N*PQ*(theta-b))
+  h22 <- sum((a^2)*N*PQ)
+# pack 'em with the value of l
+  gr <- c(g1,g2)
+  h <- matrix(c(h11,h12,h12,h22),2,2)
+  attr(l, "gradient") <- gr
+  attr(l, "hessian") <- h  
+  return(l)
+}
+
+
+Estep.2pl <-
+ function(p,testdata,theta) {
+	for (i in 1:ncol(testdata$x)) {
+  		a[i] <- p[2*(i-1) + 1]
+  		b[i] <- p[2*i]
+	}
+  
+# the following three blocks "make space" for the trace lines, and the E-tables
+	itemtrace <- matrix(0,nrow=ncol(testdata$x),ncol=length(theta))
+	r1 <- matrix(0,nrow=ncol(testdata$x),ncol=length(theta))
+	r0 <- matrix(0,nrow=ncol(testdata$x),ncol=length(theta))
+  
+# compute the trace lines
+  for (i in 1:length(a)) {
+    itemtrace[i,] <- trace.line.pts(a[i],b[i],theta)
+  }
+# loop over response patterns and compute posteriors
+  for (i in 1:length(testdata$r)) {
+    posterior <- Gaussian.pts(0,1,theta) 
+    for (item in 1:4) {
+      x <- I(testdata$x[i,item])
+      if (x)
+        posterior <- posterior*itemtrace[item,]
+      else
+        posterior <- posterior*(1-itemtrace[item,])
+    }
+# normalize posterior
+# to area equals number of persons with this response pattern
+    expd <- sum(posterior)
+    posterior <- (posterior/expd)*testdata$r[i]
+# put this response pattern's people in the r1 and r0 tables
+    for (item in 1:4) {
+      x <- I(testdata$x[i,item])
+      if (x)
+        r1[item,] <- r1[item,] + posterior
+      else
+        r0[item,] <- r0[item,] + posterior
+    } 
+  } # end loop over response patterns
+ rlist <- list(r1,r0)
+} # end of E-step
+
+
+# "main":
+a <- c(1,1,1,1)
+b <- c(0,0,0,0)
+p <- rep(0,2*length(a))
+for (i in 1:length(a)) {
+  	p[2*(i-1) + 1] <- a[i]
+  	p[2*i] <- b[i]
+}
+lastp <- p
+
+# cycles loop
+for (cycles in 1:25) {
+# E-step:
+	rlist <- Estep.2pl(p,stouffer,theta)
+
+# M-step:
+# for each item (loop)
+	for (item in 1:4) {
+		r1 <- rlist[[1]][item,]
+		r0 <- rlist[[2]][item,]
+		p2 <- c(a[item], b[item])
+# nlm hates this version of the hessian, so "check.analyticals=FALSE"
+		Mout <- nlm(f=ll.2plD,p=p2,hessian=TRUE,r1=r1,r0=r0,theta=theta, 
+			check.analyticals=FALSE)
+# new a,b are in Mout$estimate[1] and [2]
+		a[item] <- Mout$estimate[1]
+		b[item] <- Mout$estimate[2]
+	}
+# update parameter list
+	lastp <- p
+	for (i in 1:length(a)) {
+		p[2*(i-1) + 1] <- a[i]
+  		p[2*i] <- b[i]
+	}
+#	print(p)  
+}
+
+print(p)
+
+
+
+
